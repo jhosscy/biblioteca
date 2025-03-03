@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Download, ExternalLink, FileText, File, Image } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Download, ExternalLink, FileText, File, Image, Maximize, Minimize, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { Document as DocumentType } from '../types';
 import { getDocumentDownloadUrl, previewDocument, getArticleContent } from '../services/documentService';
 import { useTheme } from '../contexts/ThemeContext';
@@ -27,6 +27,12 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState<number>(1);
+  const [scale, setScale] = useState<number>(1.2);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Default scale based on device
+  const defaultScale = window.innerWidth < 640 ? 0.9 : window.innerWidth < 1024 ? 1.0 : 1.2;
 
   // Control body scroll when the modal is open
   useEffect(() => {
@@ -58,6 +64,22 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
     }
   }, [visible, document]);
 
+  // Adjust scale based on screen size
+  useEffect(() => {
+    const handleResize = () => {
+      if (!isFullscreen) {
+        setScale(window.innerWidth < 640 ? 0.9 : window.innerWidth < 1024 ? 1.0 : 1.2);
+      }
+    };
+
+    // Set initial scale
+    handleResize();
+
+    // Add event listener for window resize
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isFullscreen]);
+
   const resetState = () => {
     setPreviewUrl(null);
     setDownloadUrl(null);
@@ -66,6 +88,8 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
     setError(null);
     setNumPages(null);
     setPageNumber(1);
+    setScale(defaultScale);
+    setIsFullscreen(false);
   };
 
   const loadDocument = async () => {
@@ -179,6 +203,60 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
     }
   };
 
+  // Zoom controls
+  const zoomIn = () => {
+    setScale(prevScale => Math.min(prevScale + 0.2, 3.0));
+  };
+
+  const zoomOut = () => {
+    setScale(prevScale => Math.max(prevScale - 0.2, 0.5));
+  };
+
+  const resetZoom = () => {
+    setScale(defaultScale);
+  };
+
+  // Improved fullscreen toggle without event listeners
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+
+    if (!isFullscreen) {
+      // Enter fullscreen
+      if (containerRef.current.requestFullscreen) {
+        containerRef.current.requestFullscreen()
+          .then(() => {
+            // Update state after successful fullscreen entry
+            setIsFullscreen(true);
+          })
+          .catch(err => {
+            console.error("Error attempting to enable fullscreen:", err);
+            // Ensure state is correct if there's an error
+            setIsFullscreen(false);
+          });
+      } else {
+        // Fallback for browsers without fullscreen API
+        setIsFullscreen(true);
+      }
+    } else {
+      // Exit fullscreen
+      if (document.exitFullscreen) {
+        document.exitFullscreen()
+          .then(() => {
+            // Update state after successful fullscreen exit
+            setIsFullscreen(false);
+          })
+          .catch(err => {
+            console.error("Error attempting to exit fullscreen:", err);
+            // Try to determine actual state
+            setIsFullscreen(!!document.fullscreenElement);
+          });
+      } else {
+        // Fallback for browsers without fullscreen API
+        setIsFullscreen(false);
+      }
+    }
+  };
+
   // Get the appropriate icon based on content type
   const getDocumentIcon = () => {
     if (!document) return null;
@@ -226,12 +304,22 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
         return (
           <div 
             dangerouslySetInnerHTML={{ __html: html }} 
-            className="markdown-content prose prose-sm dark:prose-invert max-w-none transition-colors duration-300" 
+            className="markdown-content prose prose-sm dark:prose-invert max-w-none transition-colors duration-300"
+            style={{ 
+              fontSize: `${100 * scale / defaultScale}%`,
+              transformOrigin: 'top left'
+            }} 
           />
         );
       } else {
         return (
-          <div className="prose prose-sm dark:prose-invert max-w-none transition-colors duration-300">
+          <div 
+            className="prose prose-sm dark:prose-invert max-w-none transition-colors duration-300"
+            style={{ 
+              fontSize: `${100 * scale / defaultScale}%`,
+              transformOrigin: 'top left'
+            }}
+          >
             <div className="whitespace-pre-wrap">{fileContent}</div>
           </div>
         );
@@ -246,26 +334,33 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
             <img 
               src={previewUrl} 
               alt={document.title} 
-              className="max-w-full max-h-full object-contain"
+              className="max-w-full max-h-full object-contain transform-gpu"
+              style={{ 
+                transform: `scale(${scale / defaultScale})`,
+                transformOrigin: 'center',
+                transition: 'transform 0.2s ease-in-out' 
+              }}
             />
           </div>
         );
       } else if (document.type === 'pdf') {
         return (
           <div className="flex flex-col h-full">
-            <div className="flex-grow overflow-auto">
-              <PDFDocument 
-                file={previewUrl} 
-                onLoadSuccess={onDocumentLoadSuccess}
-                className="flex justify-center"
-              >
-                <Page 
-                  pageNumber={pageNumber} 
-                  renderTextLayer={true}
-                  renderAnnotationLayer={true}
-                  scale={1.2}
-                />
-              </PDFDocument>
+            <div className="flex-grow overflow-x-auto overflow-y-auto">
+              <div className="min-w-fit">
+                <PDFDocument 
+                  file={previewUrl} 
+                  onLoadSuccess={onDocumentLoadSuccess}
+                >
+                  <Page 
+                    pageNumber={pageNumber} 
+                    renderTextLayer={true}
+                    renderAnnotationLayer={true}
+                    scale={scale}
+                    className="mx-auto"
+                  />
+                </PDFDocument>
+              </div>
             </div>
             {numPages && numPages > 1 && (
               <div className="flex justify-between items-center p-3 border-t border-dark-200 dark:border-dark-700 bg-white dark:bg-dark-800 transition-colors duration-300">
@@ -325,11 +420,48 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
     );
   };
 
+  // Render zoom controls - now at the bottom
+  const renderZoomControls = () => {
+    return (
+      <div className="flex items-center justify-center space-x-3 p-3 border-t border-dark-200 dark:border-dark-700 bg-white dark:bg-dark-800 transition-colors duration-300">
+        <button
+          onClick={zoomOut}
+          className="p-1.5 text-dark-500 dark:text-dark-400 hover:text-dark-800 dark:hover:text-dark-200 hover:bg-dark-100 dark:hover:bg-dark-700 rounded transition-colors duration-300 flex items-center"
+          title="Zoom out"
+        >
+          <ZoomOut className="h-4 w-4 mr-1" />
+          <span className="text-sm">Zoom Out</span>
+        </button>
+        <button
+          onClick={resetZoom}
+          className="p-1.5 text-dark-500 dark:text-dark-400 hover:text-dark-800 dark:hover:text-dark-200 hover:bg-dark-100 dark:hover:bg-dark-700 rounded transition-colors duration-300 flex items-center"
+          title="Reset zoom"
+        >
+          <RotateCcw className="h-4 w-4 mr-1" />
+          <span className="text-sm">Reset</span>
+        </button>
+        <button
+          onClick={zoomIn}
+          className="p-1.5 text-dark-500 dark:text-dark-400 hover:text-dark-800 dark:hover:text-dark-200 hover:bg-dark-100 dark:hover:bg-dark-700 rounded transition-colors duration-300 flex items-center"
+          title="Zoom in"
+        >
+          <ZoomIn className="h-4 w-4 mr-1" />
+          <span className="text-sm">Zoom In</span>
+        </button>
+      </div>
+    );
+  };
+
   if (!visible || !document) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 dark:bg-black/70 z-50 flex items-center justify-center p-4 transition-colors duration-300">
-      <div className="bg-white dark:bg-dark-800 rounded-lg shadow-xl w-full max-w-4xl h-[90vh] flex flex-col transition-colors duration-300">
+      <div 
+        ref={containerRef}
+        className={`bg-white dark:bg-dark-800 rounded-lg shadow-xl w-full max-w-4xl h-[90vh] flex flex-col transition-all duration-300 ${
+          isFullscreen ? 'rounded-none max-w-none' : ''
+        }`}
+      >
         {/* Header - Fixed */}
         <div className="flex justify-between items-center p-4 border-b border-dark-200 dark:border-dark-700">
           <div>
@@ -360,6 +492,13 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
               </button>
             )}
             <button
+              onClick={toggleFullscreen}
+              className="p-2 text-primary-600 dark:text-primary-400 hover:text-primary-800 dark:hover:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-md transition-colors duration-300"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            >
+              {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
+            </button>
+            <button
               onClick={onClose}
               className="p-2 text-dark-500 dark:text-dark-400 hover:text-dark-700 dark:hover:text-dark-200 hover:bg-dark-100 dark:hover:bg-dark-700 rounded-md transition-colors duration-300"
             >
@@ -373,7 +512,10 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({ document, visible, onCl
           {renderContent()}
         </div>
         
-        {/* Footer - Fixed */}
+        {/* Zoom controls - Fixed at bottom */}
+        {(fileContent || previewUrl) && renderZoomControls()}
+        
+        {/* Tags footer - Only shown if there are tags */}
         {document.tags && document.tags.length > 0 && (
           <div className="px-4 py-3 border-t border-dark-200 dark:border-dark-700 transition-colors duration-300">
             <div className="flex flex-wrap gap-1">
